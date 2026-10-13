@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Caída libre</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef2f6;--card:#fff;--ink:#14202b;--mut:#5b6b7a;--line:#cfd9e3;--acc:#1f5fbf;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1720;--card:#17222e;--ink:#e6edf3;--mut:#93a4b5;--line:#2b3b4b;--acc:#6aa5ff}}
+:root[data-theme="dark"]{--bg:#0f1720;--card:#17222e;--ink:#e6edf3;--mut:#93a4b5;--line:#2b3b4b;--acc:#6aa5ff}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 'IBM Plex Sans',system-ui,sans-serif;padding:12px}
+.wrap{max-width:1000px;margin:0 auto;display:grid;gap:12px}
+@media(min-width:800px){.wrap{grid-template-columns:260px 1fr}.full{grid-column:1/-1}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+canvas{width:100%;height:470px;display:block;border-radius:6px}
+label{display:block;font-size:13px;color:var(--mut);margin:10px 0 3px}
+select,input[type=range],button,textarea{width:100%;font:inherit}
+select{padding:6px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px}
+button{padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);cursor:pointer}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600;margin-top:14px}
+button:disabled{opacity:.5}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:right}
+.scr{max-height:230px;overflow:auto}
+textarea{height:110px;font-size:12px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px;white-space:pre;margin-top:8px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
+</style></head><body>
+<div class="wrap">
+<div class="card">
+<label>Altura de caída: <b id="hv">2,0</b> m</label>
+<input type="range" id="h" min="0.5" max="5" step="0.1" value="2">
+<label>Intervalo entre mediciones</label>
+<select id="dts"><option value="0.05">0,05 s</option><option value="0.1" selected>0,10 s</option><option value="0.2">0,20 s</option></select>
+<label>Ruido de medición</label>
+<select id="noise"><option value="0">Ninguno</option><option value="1" selected>Bajo</option><option value="2">Alto</option></select>
+<label>Velocidad de reproducción</label>
+<select id="speed"><option value="1">Tiempo real</option><option value="0.5">0,5×</option><option value="0.25">0,25×</option></select>
+<button class="p" id="go">Soltar</button>
+</div>
+<div class="card"><canvas id="cv" aria-label="Simulación de caída libre"></canvas></div>
+<div class="card full">
+<div class="scr"><table><thead><tr><th>t (s)</th><th>y (m)</th><th>v (m/s)</th></tr></thead><tbody id="tb"></tbody></table></div>
+<div class="row" style="margin-top:12px"><div><label style="margin-top:0">Separador decimal</label>
+<select id="dec"><option value=",">Coma</option><option value=".">Punto</option></select></div>
+<button id="cp">Copiar datos</button></div>
+<textarea id="out" readonly aria-label="Datos para copiar"></textarea>
+<div id="msg" aria-live="polite" style="font-size:13px;color:var(--mut);margin-top:6px"></div>
+</div></div>
+<script>
+const $=id=>document.getElementById(id);
+const G=9.70+Math.random()*0.2,SG=[[0,0],[.005,.05],[.02,.2]];
+let run=null,data=[];
+const gauss=()=>{let u=0;while(!u)u=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*Math.random())};
+const f=(x,n)=>x.toFixed(n).replace('.',$('dec').value);
+const cv=$('cv'),cx=cv.getContext('2d');
+
+function render(){
+ const rows=data.map(s=>[f(s.t,2),f(s.y,3),f(s.v,2)]);
+ $('tb').innerHTML=rows.map(r=>'<tr><td>'+r.join('</td><td>')+'</td></tr>').join('');
+ const sc=$('tb').parentElement.parentElement;sc.scrollTop=sc.scrollHeight;
+ $('out').value=['t (s)\ty (m)\tv (m/s)'].concat(rows.map(r=>r.join('\t'))).join('\n')}
+
+function go(){
+ const h=+$('h').value,dt=+$('dts').value,[sy,sv]=SG[+$('noise').value],T=Math.sqrt(2*h/G),S=[{t:0,y:0,v:0}];
+ for(let k=1;k*dt<=T+1e-9;k++){const t=k*dt;S.push({t,y:Math.max(0,.5*G*t*t+sy*gauss()),v:Math.max(0,G*t+sv*gauss())})}
+ data=[];render();$('msg').textContent='';
+ const tok=run={h,T,S,i:0,shown:[],t0:performance.now(),sp:+$('speed').value,done:false};
+ $('go').disabled=$('h').disabled=true;requestAnimationFrame(n=>tick(n,tok))}
+function tick(now,tok){
+ if(run!==tok)return;
+ const t=(now-tok.t0)/1000*tok.sp,tc=Math.min(t,tok.T);
+ while(tok.i<tok.S.length&&tok.S[tok.i].t<=tc){const s=tok.S[tok.i++];tok.shown.push(s);data.push(s);render()}
+ draw(t);
+ if(t>=tok.T&&!tok.done){tok.done=true;$('go').disabled=$('h').disabled=false}
+ if(t<tok.T+3)requestAnimationFrame(n=>tick(n,tok))}
+$('go').onclick=go;
+$('h').oninput=()=>{$('hv').textContent=(+$('h').value).toFixed(1).replace('.',',');if(!run||run.done){run=null;draw(0)}};
+$('dec').onchange=render;
+$('cp').onclick=async()=>{const ta=$('out');let ok=true;
+ try{await navigator.clipboard.writeText(ta.value)}catch(e){ta.focus();ta.select();try{ok=document.execCommand('copy')}catch(_){ok=false}}
+ $('msg').textContent=ok?'Copiado. Pega en la celda A1 de la hoja de cálculo.':'Selecciona el texto del cuadro y copia con Ctrl+C.'};
+
+function bounce(tb){let v=G*run.T*.3,t=tb;while(v>.3){const fl=2*v/G;if(t<fl)return{y:v*t-.5*G*t*t,v:v-G*t};t-=fl;v*=.3}return{y:0,v:0}}
+function arrow(x,y,dy,col,lab){if(Math.abs(dy)<3)return;const s=Math.sign(dy);cx.strokeStyle=col;cx.fillStyle=col;cx.lineWidth=2.5;cx.beginPath();cx.moveTo(x,y);cx.lineTo(x,y+dy-s*7);cx.stroke();cx.beginPath();cx.moveTo(x,y+dy);cx.lineTo(x-5,y+dy-s*9);cx.lineTo(x+5,y+dy-s*9);cx.fill();cx.font='italic 600 13px IBM Plex Sans,sans-serif';cx.textAlign='right';cx.fillText(lab,x-7,y+dy/2+4)}
+function ball(x,y,r,a){
+ cx.globalAlpha=a;const g=cx.createRadialGradient(x-r*.35,y-r*.4,r*.1,x,y,r);
+ g.addColorStop(0,'#fff');g.addColorStop(.25,'#d5dde3');g.addColorStop(.7,'#74828e');g.addColorStop(1,'#2b3640');
+ cx.fillStyle=g;cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();cx.globalAlpha=1}
+function draw(t=0){
+ const dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;cx.setTransform(dpr,0,0,dpr,0,0);
+ const fl=H-44,top=14,sc=(fl-top)/5.3,X=W*.56,Y=m=>fl-m*sc,r=10;
+ const h=run?run.h:+$('h').value,fall=Math.min(h,.5*G*t*t),tb=run&&t>run.T?t-run.T:0;
+ const bs=tb?bounce(tb):{y:0,v:0},m=h-fall+bs.y,cy=Y(m)-r,vd=run&&t<run.T?G*t:-bs.v;
+ // pared
+ let g=cx.createLinearGradient(0,0,0,fl);g.addColorStop(0,'#b9c5ce');g.addColorStop(1,'#e4e9ec');cx.fillStyle=g;cx.fillRect(0,0,W,fl);
+ cx.strokeStyle='rgba(60,80,95,.12)';cx.lineWidth=1;cx.beginPath();
+ for(let x=((W*.56)%70);x<W;x+=70){cx.moveTo(x,0);cx.lineTo(x,fl)}for(let y=fl;y>0;y-=70){cx.moveTo(0,y);cx.lineTo(W,y)}cx.stroke();
+ // mesa
+ g=cx.createLinearGradient(0,fl,0,H);g.addColorStop(0,'#9a7650');g.addColorStop(1,'#5a412b');cx.fillStyle=g;cx.fillRect(0,fl+12,W,H-fl-12);
+ cx.fillStyle='rgba(255,255,255,.25)';cx.fillRect(0,fl+12,W,2);
+ // regla
+ g=cx.createLinearGradient(14,0,44,0);g.addColorStop(0,'#e9cf7f');g.addColorStop(1,'#d3b45e');cx.fillStyle=g;cx.fillRect(14,top,30,fl-top);
+ cx.strokeStyle='#2a2415';cx.fillStyle='#2a2415';cx.font='11px IBM Plex Sans,sans-serif';cx.textAlign='left';
+ for(let c=0;c<=520;c+=5){const y=Y(c/100),L=c%100==0?18:c%50==0?13:c%10==0?8:4;cx.lineWidth=c%100==0?1.3:.8;cx.beginPath();cx.moveTo(44,y);cx.lineTo(44-L,y);cx.stroke();
+  if(c%100==0&&c>0)cx.fillText(c/100,18,y-3)}
+ // soporte, varilla y electroimán
+ cx.fillStyle='#4a5560';cx.fillRect(X-70,0,140,8);cx.fillStyle='#8a97a3';cx.fillRect(X-2,8,4,Y(h)-2*r-22);
+ cx.fillStyle='#2f3841';cx.beginPath();cx.roundRect(X-15,Y(h)-2*r-14,30,14,3);cx.fill();
+ cx.fillStyle=run&&t>0?'#3a4a3a':'#ff3b30';cx.beginPath();cx.arc(X+9,Y(h)-2*r-7,2,0,7);cx.fill();
+ // base amortiguadora
+ cx.fillStyle='#262b32';cx.beginPath();cx.roundRect(X-40,fl,80,12,[3,3,0,0]);cx.fill();cx.fillStyle='rgba(255,255,255,.18)';cx.fillRect(X-40,fl,80,2);
+ // sombra
+ const hh=Math.max(0,m);cx.fillStyle='rgba(0,0,0,'+(.38*Math.max(0,1-hh/2.5)).toFixed(3)+')';
+ cx.beginPath();cx.ellipse(X,fl+1,r*(1.5-.3*Math.min(1,hh/2.5)),3,0,0,7);cx.fill();
+ // posiciones del estroboscopio
+ if(run)run.shown.forEach(s=>{const yy=Y(h-s.y)-r;ball(X,yy,r,.3);cx.strokeStyle='rgba(31,95,191,.6)';cx.lineWidth=1;cx.beginPath();cx.moveTo(X+r+3,yy);cx.lineTo(X+r+14,yy);cx.stroke()});
+ // estela de movimiento
+ if(run&&t>0&&t<run.T){const v=G*t;for(let i=1;i<=6;i++)ball(X,cy-v*i*.006*sc,r,.12*(1-i/7))}
+ ball(X,cy,r,1);
+ arrow(X-r-8,cy,vd*12,'#d9480f','v');arrow(X-r-42,cy,50,'#1f5fbf','g')}
+addEventListener('resize',()=>draw(run&&run.done?run.T:0));
+render();draw(0);
+</script></body></html>
